@@ -62,6 +62,7 @@ struct RgbUi {
 }
 
 struct FanUi {
+    worker: Option<std::thread::JoinHandle<()>>,
     initial_profile_loaded: bool,
     tx: FanSender<FanCmd>,
     status: Arc<Mutex<FanStatus>>,
@@ -113,7 +114,7 @@ impl App {
 
         let (tx, status) = rgb::spawn(cc.egui_ctx.clone());
         let _ = tx.send(RgbCmd::Connect);
-        let (fan_tx, fan_status) = fans::spawn(snap.clone(), cc.egui_ctx.clone());
+        let (fan_tx, fan_status, fan_worker) = fans::spawn(snap.clone(), cc.egui_ctx.clone());
 
         let logo = cc.egui_ctx.load_texture("corewatch-logo",
             egui::ColorImage::from_rgba_unmultiplied([256,256], include_bytes!("../assets/corewatch.rgba")),
@@ -129,6 +130,7 @@ impl App {
             last_seq: 0,
             tab: Tab::Monitor,
             fans: FanUi {
+                worker: Some(fan_worker),
                 initial_profile_loaded: false,
                 tx: fan_tx, status: fan_status, profile: FanProfile::Balanced,
                 source: FanSource::Cpu, manual: 55.0, custom: FanProfile::Custom.points(),
@@ -191,7 +193,7 @@ impl App {
 
 impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let _ = self.fans.tx.send(FanCmd::Shutdown);
+        fans::shutdown_and_wait(&self.fans.tx, &mut self.fans.worker);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) { self.draw(ctx); }

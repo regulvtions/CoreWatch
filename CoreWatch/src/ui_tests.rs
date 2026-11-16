@@ -18,7 +18,7 @@ fn fixture(ctx: &egui::Context) -> (App, tokio::sync::mpsc::UnboundedReceiver<Rg
         desktop: desktop::Desktop::disabled(), preferences: desktop::Preferences::default(), startup_enabled:false, options_message:String::new(), force_quit:false,
         snap: Arc::new(Mutex::new(snap)), logo, hist: HashMap::new(), fan_max: HashMap::new(), last_seq: 0, tab: Tab::Monitor,
         rgb: RgbUi { tx, status: Arc::new(Mutex::new(RgbStatus { connected: true, devices, message: "Connected · 4 devices".into(), ..Default::default() })), settings: RgbSettings::default(), last_sent: None, applied: None, applied_gpu: false, react_to_gpu: false, devices_initialized: false },
-        fans: FanUi { initial_profile_loaded:false, tx: fan_tx, status: Arc::new(Mutex::new(FanStatus { online: true, message: "Connected · 3 available fan channels".into(), fans: fan_devices })), profile: FanProfile::Balanced, source: FanSource::Cpu, manual: 55.0, custom: FanProfile::Custom.points() },
+        fans: FanUi { worker: None, initial_profile_loaded:false, tx: fan_tx, status: Arc::new(Mutex::new(FanStatus { online: true, message: "Connected · 3 available fan channels".into(), fans: fan_devices })), profile: FanProfile::Balanced, source: FanSource::Cpu, manual: 55.0, custom: FanProfile::Custom.points() },
     }, rx, fan_rx)
 }
 

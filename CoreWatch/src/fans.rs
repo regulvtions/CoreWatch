@@ -36,12 +36,21 @@ pub struct FanDevice { pub id: String, pub name: String, pub mode: Mode, pub las
 pub struct FanStatus { pub online: bool, pub message: String, pub fans: Vec<FanDevice> }
 pub enum Command { SetMode(String, Mode), SetMany(Vec<String>, Mode), ResetAll, Refresh, Shutdown }
 
-pub fn spawn(snapshot: Arc<Mutex<Snapshot>>, ctx: eframe::egui::Context) -> (Sender<Command>, Arc<Mutex<FanStatus>>) {
+pub fn spawn(snapshot: Arc<Mutex<Snapshot>>, ctx: eframe::egui::Context) -> (Sender<Command>, Arc<Mutex<FanStatus>>, std::thread::JoinHandle<()>) {
     let (tx, rx) = mpsc::channel();
     let status = Arc::new(Mutex::new(FanStatus { message: "Enable LibreHardwareMonitor's local HTTP server (port 8085).".into(), ..Default::default() }));
     let out = status.clone();
-    std::thread::Builder::new().name("fans".into()).spawn(move || worker(rx, out, snapshot, ctx)).expect("fan control thread");
-    (tx, status)
+    let handle = std::thread::Builder::new().name("fans".into()).spawn(move || worker(rx, out, snapshot, ctx)).expect("fan control thread");
+    (tx, status, handle)
+}
+
+// Normal process exit must wait for the worker's final HTTP requests. Dropping
+// a JoinHandle detaches a thread; it does not keep the process alive.
+pub fn shutdown_and_wait(tx: &Sender<Command>, handle: &mut Option<std::thread::JoinHandle<()>>) {
+    let _ = tx.send(Command::Shutdown);
+    if let Some(handle) = handle.take() {
+        if handle.join().is_err() { eprintln!("Fan worker stopped unexpectedly during shutdown"); }
+    }
 }
 
 // Small localhost-only HTTP client, so no additional TLS or networking dependencies are needed.
@@ -97,8 +106,24 @@ fn curve(temp: f32, points: &[(f32,f32);4]) -> f32 {
     }
     points[3].1.clamp(MIN_DUTY,100.)
 }
+fn reset_owned_with(owned: &mut HashSet<String>, mut reset: impl FnMut(&str) -> Result<(),String>) -> Vec<String> {
+    let mut failures = Vec::new();
+    // Retain failures so a retry never loses track of an overridden channel.
+    owned.retain(|id| match reset(id) {
+        Ok(()) => false,
+        Err(e) => { failures.push(format!("{id}: {e}")); true }
+    });
+    failures
+}
 fn reset_owned(owned: &mut HashSet<String>) {
-    for id in owned.drain() { let _ = set(&id, None); }
+    let _ = reset_owned_with(owned, |id| set(id, None));
+}
+fn restore_before_exit(owned: &mut HashSet<String>) {
+    reset_owned(owned);
+    if !owned.is_empty() {
+        let failures = reset_owned_with(owned, |id| set(id, None));
+        if !failures.is_empty() { eprintln!("Could not restore fan control: {}", failures.join("; ")); }
+    }
 }
 fn worker(rx: Receiver<Command>, status: Arc<Mutex<FanStatus>>, snap: Arc<Mutex<Snapshot>>, ctx: eframe::egui::Context) {
     let path = FanStore::path();
@@ -114,7 +139,7 @@ fn worker(rx: Receiver<Command>, status: Arc<Mutex<FanStatus>>, snap: Arc<Mutex<
     loop {
         let mut save_needed=false;
         match rx.recv_timeout(Duration::from_millis(250)) {
-            Ok(Command::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => { reset_owned(&mut owned); break; }
+            Ok(Command::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => { restore_before_exit(&mut owned); break; }
             Ok(Command::ResetAll) => { reset_owned(&mut owned); controls.clear(); last_duty.clear(); saved.controls.clear(); save_needed=true; }
             Ok(Command::Refresh) => last_scan = Instant::now() - Duration::from_secs(10),
             Ok(Command::SetMany(ids, mode)) => {
@@ -196,5 +221,32 @@ fn worker(rx: Receiver<Command>, status: Arc<Mutex<FanStatus>>, snap: Arc<Mutex<
             s.fans = found.iter().map(|(id,name)| FanDevice { id: id.clone(), name: name.clone(), mode: controls.get(id).cloned().unwrap_or(Mode::Automatic), last_duty: last_duty.get(id).copied() }).collect();
         }
         ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    #[test]
+    fn quit_waits_until_reset_work_finishes() {
+        let (tx,rx)=mpsc::channel();
+        let restored=Arc::new(AtomicBool::new(false));let done=restored.clone();
+        let mut handle=Some(std::thread::spawn(move || {
+            assert!(matches!(rx.recv().unwrap(),Command::Shutdown));
+            std::thread::sleep(Duration::from_millis(40));
+            done.store(true,Ordering::SeqCst);
+        }));
+        shutdown_and_wait(&tx,&mut handle);
+        assert!(restored.load(Ordering::SeqCst));assert!(handle.is_none());
+        shutdown_and_wait(&tx,&mut handle); // repeated cleanup is harmless
+    }
+    #[test]
+    fn reset_retains_failed_channels_and_retries_only_them() {
+        let mut owned=HashSet::from(["fan-a".to_string(),"fan-b".to_string()]);
+        let errors=reset_owned_with(&mut owned,|id|if id=="fan-b"{Err("temporarily unavailable".into())}else{Ok(())});
+        assert_eq!(errors.len(),1);assert_eq!(owned,HashSet::from(["fan-b".to_string()]));
+        let errors=reset_owned_with(&mut owned,|id|{assert_eq!(id,"fan-b");Ok(())});
+        assert!(errors.is_empty());assert!(owned.is_empty());
     }
 }
