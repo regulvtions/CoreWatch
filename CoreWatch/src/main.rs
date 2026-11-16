@@ -2,6 +2,7 @@
 
 mod desktop;
 mod rgb;
+mod tab_fade;
 mod sensors;
 mod fans;
 mod fan_store;
@@ -281,11 +282,14 @@ impl App {
                 ui.label(RichText::new("v0.6.1").size(11.0).color(DIM));
             });
 
+        let page_opacity = tab_fade::opacity(ctx, self.tab);
+
         if matches!(self.tab, Tab::Fans | Tab::Rgb) {
             egui::TopBottomPanel::bottom("page_actions")
                 .frame(Frame::none().fill(Color32::from_rgb(14, 16, 20))
                     .inner_margin(Margin::symmetric(24.0, 14.0)))
                 .show(ctx, |ui| {
+                    ui.set_opacity(page_opacity);
                     if self.tab == Tab::Rgb { self.lighting_actions(ui, &rgb_status); }
                     else {
                         ui.horizontal_wrapped(|ui| {
@@ -305,6 +309,7 @@ impl App {
         egui::CentralPanel::default()
             .frame(Frame::none().fill(BG).inner_margin(Margin::symmetric(24.0, 8.0)))
             .show(ctx, |ui| {
+                ui.set_opacity(page_opacity);
                 egui::ScrollArea::vertical()
                     .id_salt(match self.tab { Tab::Monitor => "monitor", Tab::Fans => "fans", Tab::Rgb => "rgb", Tab::Options => "options" })
                     .auto_shrink([false, false])
