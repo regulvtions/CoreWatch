@@ -54,6 +54,10 @@ impl Desktop {
         let mut desktop=Self::disabled();
         #[cfg(windows)] {
             use tray_icon::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState, Icon};
+            // Window styling is independent of tray availability.
+            if let Ok(window) = NativeWindow::from_creation_context(cc) {
+                window.round_corners();
+            }
             let result=(|| -> Result<tray_icon::TrayIcon,String> {
                 let window = NativeWindow::from_creation_context(cc)?;
                 let menu=tray_menu::TrayMenu::new()?;
@@ -95,6 +99,25 @@ impl NativeWindow {
         match cc.window_handle().map_err(|e| e.to_string())?.as_raw() {
             RawWindowHandle::Win32(handle) => Ok(Self(handle.hwnd.get())),
             _ => Err("Windows window handle is unavailable".into()),
+        }
+    }
+
+    fn round_corners(self) {
+        use windows_sys::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        };
+        // Let Windows 11 clip the real outer window with antialiased corners.
+        // DWM handles resizing, DPI changes, maximize/snap and tray restoration.
+        // Unsupported systems keep their existing frame; cosmetic failure must
+        // not prevent startup or disable the tray.
+        let preference = DWMWCP_ROUND;
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                self.0 as windows_sys::Win32::Foundation::HWND,
+                DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+                (&preference as *const i32).cast(),
+                std::mem::size_of_val(&preference) as u32,
+            );
         }
     }
 
