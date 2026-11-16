@@ -1,6 +1,6 @@
 [package]
 name = "corewatch"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 description = "Lightweight CPU/GPU temperature, fan speed and RGB control for Windows 11"
 

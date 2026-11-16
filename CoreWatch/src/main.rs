@@ -279,7 +279,7 @@ impl App {
                 ui.separator();
                 ui.label(RichText::new("LOCAL MONITORING").size(10.0).color(DIM));
                 ui.label(RichText::new("1-second sensor polling").size(11.0).color(DIM));
-                ui.label(RichText::new("v0.6.1").size(11.0).color(DIM));
+                ui.label(RichText::new("v0.6.2").size(11.0).color(DIM));
             });
 
         let page_opacity = tab_fade::opacity(ctx, self.tab);
